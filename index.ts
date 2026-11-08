@@ -172,7 +172,7 @@ export default function nestedAgentsMd(pi: ExtensionAPI) {
 		const claimed = absolutePaths.filter((path) => !inFlight.has(path));
 		if (claimed.length === 0) return;
 		for (const path of claimed) inFlight.add(path);
-		try {
+		{
 			const alreadyInjected = previouslyInjected(ctx);
 			const toInject = claimed.filter((path) => !alreadyInjected.has(path));
 			if (toInject.length === 0) return;
@@ -203,11 +203,15 @@ export default function nestedAgentsMd(pi: ExtensionAPI) {
 				// appended directly. Either way no turn is triggered by instructions.
 				{ triggerTurn: false },
 			);
-		} finally {
-			// Claims last only until the batch settles; from the next turn the
-			// history ledger is authoritative.
-			for (const path of claimed) inFlight.delete(path);
 		}
+		// NOTE: claims are deliberately NOT released here. While a run is
+		// streaming, pi only queues the synthetic message; it lands in session
+		// history at turn_end (_flushPendingCustomMessages). Releasing the claim
+		// now would open a window — message queued but not yet in the ledger —
+		// where a sibling read of the same module re-injects the same file (the
+		// duplicate-load bug). Claims are held until the durable ledger exists:
+		// inFlight.clear() at turn_end/agent_end, after which history is
+		// authoritative.
 	};
 
 	/**
@@ -245,10 +249,14 @@ export default function nestedAgentsMd(pi: ExtensionAPI) {
 		workspaceRoot = await realpathSafe(ctx.cwd);
 	});
 
-	// Claims are moot once the turn's messages are flushed into history.
-	pi.on("turn_end", async () => {
-		inFlight.clear();
-	});
+	// Claims are moot once the turn's messages are flushed into history. pi
+	// flushes queued custom messages after the turn_end dispatch, and no
+	// tool_result can fire between here and the next model request, so clearing
+	// now is race-free. agent_end covers aborted runs, where turn_end may not
+	// fire (a held claim would otherwise suppress a legitimate later load).
+	const releaseClaims = () => inFlight.clear();
+	pi.on("turn_end", releaseClaims);
+	pi.on("agent_end", releaseClaims);
 
 	// The discovery hook. OpenCode triggers on its one `read` tool (files and
 	// directory listings); pi splits that into `read` and `ls`, so both trigger:
