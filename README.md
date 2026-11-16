@@ -17,13 +17,12 @@ written against the V2 `dev` sources:
 
 ## Install
 
-Copy or symlink into your extensions directory:
-
 ```bash
-git clone <this repo> ~/.pi/agent/extensions/nested-agents-md
+pi install git:github.com/G36maid/pi-nested-agents-md
 ```
 
-or load directly during development:
+Git installs follow the default branch; `pi update --extensions` pulls the
+latest. Or load one-off during development:
 
 ```bash
 pi --extension ./index.ts
